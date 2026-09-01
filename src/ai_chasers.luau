@@ -51,18 +51,6 @@ steeringTorque.RelativeTo = Enum.ActuatorRelativeTo.World
 steeringTorque.Torque = Vector3.zero
 steeringTorque.Parent = weightPart
 
-local driveAttachment = Instance.new("Attachment")
-driveAttachment.Name = "AI_DriveAttachment"
-driveAttachment.Parent = weightPart
-
-local driveForce = Instance.new("VectorForce")
-driveForce.Name = "AI_DriveForce"
-driveForce.Attachment0 = driveAttachment
-driveForce.RelativeTo = Enum.ActuatorRelativeTo.World
-driveForce.ApplyAtCenterOfMass = true
-driveForce.Force = Vector3.zero
-driveForce.Parent = weightPart
-
 print(string.format("ai_chasers: driving %s to %s", carModel.Name, targetNode:GetFullName()))
 
 RunService.Heartbeat:Connect(function()
@@ -96,13 +84,16 @@ RunService.Heartbeat:Connect(function()
 	local targetDirection = if distance > 0.001 then flatOffset.Unit else flatForward
 	local headingError = math.atan2(flatRight:Dot(targetDirection), flatForward:Dot(targetDirection))
 
-	-- For this first navigation demo, apply force along the planar target
-	-- vector. It guarantees progress while the placeholder yaw torque works
-	-- on aligning the chassis. Later tire forces can replace this guidance
-	-- force with longitudinal wheel-frame traction.
-	local driveDirection = targetDirection
+	-- Drive along the chassis's actual heading, not straight at the target.
+	-- Thrust that ignored heading let the car reach the node without ever
+	-- needing to turn, so the yaw torque had no effect on the actual path.
+	-- Alignment tapers desired speed down while turning (and to zero if the
+	-- target is behind the car), so the chassis slows to steer instead of
+	-- fighting the turn with full forward thrust.
+	local driveDirection = flatForward
+	local alignment = math.max(flatForward:Dot(targetDirection), 0)
 	local driveSpeed = weightPart.AssemblyLinearVelocity:Dot(driveDirection)
-	local desiredSpeed = math.clamp(distance * APPROACH_SPEED_SCALE, 0, MAX_SPEED)
+	local desiredSpeed = math.clamp(distance * APPROACH_SPEED_SCALE, 0, MAX_SPEED) * alignment
 	if distance <= ARRIVAL_RADIUS then
 		desiredSpeed = 0
 	end
@@ -117,7 +108,6 @@ RunService.Heartbeat:Connect(function()
 
 	-- Propulsion is applied at each physical wheel, not to a hidden motorized
 	-- chassis. The wheel constraints transfer the traction into the suspension.
-	driveForce.Force = Vector3.zero
 	local perWheelForce = totalForce / #WHEEL_NAMES
 	for _, wheelData in pairs(wheels) do
 		wheelData.Propulsion.Force = perWheelForce
@@ -139,7 +129,6 @@ RunService.Heartbeat:Connect(function()
 
 	if distance <= ARRIVAL_RADIUS and math.abs(driveSpeed) <= ARRIVAL_SPEED then
 		-- Hold the vehicle stopped while allowing the physics engine to settle it.
-		driveForce.Force = Vector3.zero
 		for _, wheelData in pairs(wheels) do
 			wheelData.Propulsion.Force = Vector3.zero
 		end
